@@ -1,7 +1,7 @@
 '''
 @Author: xxxmy
 @Github: github.com/VectXmy
-@Date: 2019-09-26
+@Date: 2019-10-06
 @Email: xxxmy@foxmail.com
 '''
 
@@ -72,7 +72,8 @@ class ClsCntRegHead(nn.Module):
             reg_conv_out=self.reg_conv(P)
 
             cls_logits.append(self.cls_logits(cls_conv_out))
-            cnt_logits.append(self.cnt_logits(cls_conv_out))
+            # cnt_logits.append(self.cnt_logits(cls_conv_out))
+            cnt_logits.append(self.cnt_logits(reg_conv_out))
             reg_preds.append(self.scale_exp[index](self.reg_pred(reg_conv_out)))
         return cls_logits,cnt_logits,reg_preds
 

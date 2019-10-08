@@ -1,7 +1,7 @@
 '''
 @Author: xxxmy
 @Github: github.com/VectXmy
-@Date: 2019-09-26
+@Date: 2019-10-07
 @Email: xxxmy@foxmail.com
 '''
 
@@ -16,7 +16,7 @@ import torch
 class DefaultConfig():
     #backbone
     pretrained=True
-    freeze_bn=False
+    freeze_bn=True
 
     #fpn
     fpn_out_channels=256
@@ -32,7 +32,7 @@ class DefaultConfig():
     limit_range=[[-1,64],[64,128],[128,256],[256,512],[512,999999]]
 
     #inference
-    score_threshold=0.2
+    score_threshold=0.5
     nms_iou_threshold=0.2
     max_detection_boxes_num=150
 
@@ -57,6 +57,7 @@ class FCOS(nn.Module):
                 module.eval()
         if self.config.freeze_bn:
             self.apply(freeze_bn)
+            print("INFO====>success frozen bn")
 
     def forward(self,x):
         '''

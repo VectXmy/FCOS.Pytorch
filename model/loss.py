@@ -1,7 +1,7 @@
 '''
 @Author: xxxmy
 @Github: github.com/VectXmy
-@Date: 2019-09-26
+@Date: 2019-10-06
 @Email: xxxmy@foxmail.com
 '''
 
@@ -199,7 +199,7 @@ def compute_cnt_loss(preds,targets,mask):
         loss.append(nn.functional.binary_cross_entropy_with_logits(input=pred_pos,target=target_pos,reduction='sum').view(1))
     return torch.cat(loss,dim=0)/num_pos#[batch_size,]
 
-def compute_reg_loss(preds,targets,mask):
+def compute_reg_loss(preds,targets,mask,mode='giou'):
     '''
     Args  
     preds: list contains five level pred [batch_size,4,_h,_w]
@@ -222,7 +222,12 @@ def compute_reg_loss(preds,targets,mask):
         pred_pos=preds[batch_index][mask[batch_index]]#[num_pos_b,4]
         target_pos=targets[batch_index][mask[batch_index]]#[num_pos_b,4]
         assert len(pred_pos.shape)==2
-        loss.append(iou_loss(pred_pos,target_pos).view(1))
+        if mode=='iou':
+            loss.append(iou_loss(pred_pos,target_pos).view(1))
+        elif mode=='giou':
+            loss.append(giou_loss(pred_pos,target_pos).view(1))
+        else:
+            raise NotImplementedError("reg loss only implemented ['iou','giou']")
     return torch.cat(loss,dim=0)/num_pos#[batch_size,]
 
 def iou_loss(preds,targets):
@@ -239,6 +244,30 @@ def iou_loss(preds,targets):
     area2=(targets[:,2]+targets[:,0])*(targets[:,3]+targets[:,1])
     iou=overlap/(area1+area2-overlap)
     loss=-iou.clamp(min=1e-6).log()
+    return loss.sum()
+
+def giou_loss(preds,targets):
+    '''
+    Args:
+    preds: [n,4] ltrb
+    targets: [n,4]
+    '''
+    lt_min=torch.min(preds[:,:2],targets[:,:2])
+    rb_min=torch.min(preds[:,2:],targets[:,2:])
+    wh_min=(rb_min+lt_min).clamp(min=0)
+    overlap=wh_min[:,0]*wh_min[:,1]#[n]
+    area1=(preds[:,2]+preds[:,0])*(preds[:,3]+preds[:,1])
+    area2=(targets[:,2]+targets[:,0])*(targets[:,3]+targets[:,1])
+    union=(area1+area2-overlap)
+    iou=overlap/union
+
+    lt_max=torch.max(preds[:,:2],targets[:,:2])
+    rb_max=torch.max(preds[:,2:],targets[:,2:])
+    wh_max=(rb_max+lt_max).clamp(0)
+    G_area=wh_max[:,0]*wh_max[:,1]#[n]
+
+    giou=iou-(G_area-union)/G_area.clamp(1e-10)
+    loss=1.-giou
     return loss.sum()
 
 def focal_loss_from_logits(preds,targets,gamma=2.0,alpha=0.25):

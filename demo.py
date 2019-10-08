@@ -42,45 +42,47 @@ def convertSyncBNtoBN(module):
         module_output.add_module(name,convertSyncBNtoBN(child))
     del module
     return module_output
+if __name__=="__main__":
+    model=FCOSDetector(mode="inference")
+    model=torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+    print("INFO===>success convert BN to SyncBN")
+    model.load_state_dict(torch.load("./logs/voc2012_multigpu_800x1333_epoch30_loss0.5746.pth",map_location=torch.device('cpu')))
+    model=convertSyncBNtoBN(model)
+    print("INFO===>success convert SyncBN to BN")
+    model=model.cuda().eval()
+    print("===>success loading model")
 
-model=FCOSDetector(mode="inference")
-model=convertSyncBNtoBN(model)
-print("INFO===>success convert SyncBN to BN")
-model.load_state_dict(torch.load("./logs/voc2012_multigpu_512x800_epoch30_loss0.6963.pth",map_location=torch.device('cpu')))
-model=model.cuda().eval()
-print("===>success loading model")
+    import os
+    root="./test_images/"
+    names=os.listdir(root)
+    for name in names:
+        img_bgr=cv2.imread(root+name)
+        img_pad=preprocess_img(img_bgr,[800,1024])
+        img=cv2.cvtColor(img_pad.copy(),cv2.COLOR_BGR2RGB)
+        img1=transforms.ToTensor()(img.copy())
+        img1= transforms.Normalize((0.485,0.456,0.406), (0.229,0.224,0.225),inplace=True)(img1)
+        img1=img1.cuda()
+        
 
-import os
-root="./test_images/"
-names=os.listdir(root)
-for name in names:
-    img_bgr=cv2.imread(root+name)
-    img_pad=preprocess_img(img_bgr,[512,800])
-    img=cv2.cvtColor(img_pad.copy(),cv2.COLOR_BGR2RGB)
-    img1=transforms.ToTensor()(img.copy())
-    img1= transforms.Normalize((0.485,0.456,0.406), (0.229,0.224,0.225),inplace=True)(img1)
-    img1=img1.cuda()
-    
+        start_t=time.time()
+        with torch.no_grad():
+            out=model(img1.unsqueeze_(dim=0))
+        end_t=time.time()
+        cost_t=1000*(end_t-start_t)
+        print("===>success processing img, cost time %.2f ms"%cost_t)
+        # print(out)
+        scores,classes,boxes=out
 
-    start_t=time.time()
-    with torch.no_grad():
-        out=model(img1.unsqueeze_(dim=0))
-    end_t=time.time()
-    cost_t=1000*(end_t-start_t)
-    print("===>success processing img, cost time %.2f ms"%cost_t)
-    # print(out)
-    scores,classes,boxes=out
+        boxes=boxes[0].cpu().numpy().tolist()
+        classes=classes[0].cpu().numpy().tolist()
+        scores=scores[0].cpu().numpy().tolist()
 
-    boxes=boxes[0].cpu().numpy().tolist()
-    classes=classes[0].cpu().numpy().tolist()
-    scores=scores[0].cpu().numpy().tolist()
-
-    for i,box in enumerate(boxes):
-        pt1=(int(box[0]),int(box[1]))
-        pt2=(int(box[2]),int(box[3]))
-        img_pad=cv2.rectangle(img_pad,pt1,pt2,(0,255,0))
-        img_pad=cv2.putText(img_pad,"%s %.3f"%(VOCDataset.CLASSES_NAME[int(classes[i])],scores[i]),pt1,cv2.FONT_HERSHEY_SIMPLEX,0.5,[255,0,20],2)
-    cv2.imwrite("./out_images/"+name,img_pad)
+        for i,box in enumerate(boxes):
+            pt1=(int(box[0]),int(box[1]))
+            pt2=(int(box[2]),int(box[3]))
+            img_pad=cv2.rectangle(img_pad,pt1,pt2,(0,255,0))
+            img_pad=cv2.putText(img_pad,"%s %.3f"%(VOCDataset.CLASSES_NAME[int(classes[i])],scores[i]),(int(box[0]),int(box[1])+10),cv2.FONT_HERSHEY_SIMPLEX,0.5,[0,200,20],2)
+        cv2.imwrite("./out_images/"+name,img_pad)
 
 
 
