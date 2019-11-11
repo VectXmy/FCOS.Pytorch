@@ -14,18 +14,30 @@ from dataloader.VOC_dataset import VOCDataset
 import time
 
 def preprocess_img(image,input_ksize):
-    ih, iw    = input_ksize
+    '''
+    resize image and bboxes 
+    Returns
+    image_paded: input_ksize  
+    bboxes: [None,4]
+    '''
+    min_side, max_side    = input_ksize
     h,  w, _  = image.shape
 
-    scale = min(iw/w, ih/h)
+    smallest_side = min(w,h)
+    largest_side=max(w,h)
+    scale=min_side/smallest_side
+    if largest_side*scale>max_side:
+        scale=max_side/largest_side
     nw, nh  = int(scale * w), int(scale * h)
     image_resized = cv2.resize(image, (nw, nh))
 
-    image_paded = np.full(shape=[ih, iw, 3], fill_value=128.0,dtype=np.float32)
-    dw, dh = (iw - nw) // 2, (ih-nh) // 2
-    image_paded[dh:nh+dh, dw:nw+dw, :] = image_resized
-    return image_paded
+    pad_w=32-nw%32
+    pad_h=32-nh%32
 
+    image_paded = np.zeros(shape=[nh+pad_h, nw+pad_w, 3],dtype=np.float32)
+    image_paded[:nh, :nw, :] = image_resized
+    return image_paded
+    
 def convertSyncBNtoBN(module):
     module_output = module
     if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
@@ -44,11 +56,11 @@ def convertSyncBNtoBN(module):
     return module_output
 if __name__=="__main__":
     model=FCOSDetector(mode="inference")
-    model=torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-    print("INFO===>success convert BN to SyncBN")
-    model.load_state_dict(torch.load("./logs/voc2012_multigpu_800x1333_epoch30_loss0.5746.pth",map_location=torch.device('cpu')))
-    model=convertSyncBNtoBN(model)
-    print("INFO===>success convert SyncBN to BN")
+    # model=torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+    # print("INFO===>success convert BN to SyncBN")
+    model.load_state_dict(torch.load("./logs/voc20172012_multigpu_800x1024_1111_epoch7_loss0.5926.pth",map_location=torch.device('cpu')))
+    # model=convertSyncBNtoBN(model)
+    # print("INFO===>success convert SyncBN to BN")
     model=model.cuda().eval()
     print("===>success loading model")
 
