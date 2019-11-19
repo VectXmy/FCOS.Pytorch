@@ -1,7 +1,7 @@
 '''
 @Author: xxxmy
 @Github: github.com/VectXmy
-@Date: 2019-10-07
+@Date: 2019-09-26
 @Email: xxxmy@foxmail.com
 '''
 
@@ -11,30 +11,9 @@ from .backbone.resnet import resnet50
 import torch.nn as nn
 from .loss import GenTargets,LOSS,coords_fmap2orig
 import torch
+from .config import DefaultConfig
 
 
-class DefaultConfig():
-    #backbone
-    pretrained=True
-    freeze_bn=True
-
-    #fpn
-    fpn_out_channels=256
-    use_p5=True
-    
-    #head
-    class_num=20
-    use_GN_head=True
-    prior=0.01
-
-    #training
-    strides=[8,16,32,64,128]
-    limit_range=[[-1,64],[64,128],[128,256],[256,512],[512,999999]]
-
-    #inference
-    score_threshold=0.5
-    nms_iou_threshold=0.2
-    max_detection_boxes_num=150
 
 class FCOS(nn.Module):
     
@@ -55,9 +34,15 @@ class FCOS(nn.Module):
         def freeze_bn(module):
             if isinstance(module,nn.BatchNorm2d):
                 module.eval()
+            classname = module.__class__.__name__
+            if classname.find('BatchNorm') != -1:
+                for p in module.parameters(): p.requires_grad=False
         if self.config.freeze_bn:
             self.apply(freeze_bn)
-            print("INFO====>success frozen bn")
+            print("INFO===>success frozen BN")
+        if self.config.freeze_stage_1:
+            self.backbone.freeze_stages(1)
+            print("INFO===>success frozen backbone stage1")
 
     def forward(self,x):
         '''
@@ -73,12 +58,16 @@ class FCOS(nn.Module):
         return [cls_logits,cnt_logits,reg_preds]
 
 class DetectHead(nn.Module):
-    def __init__(self,score_threshold,nms_iou_threshold,max_detection_boxes_num,strides):
+    def __init__(self,score_threshold,nms_iou_threshold,max_detection_boxes_num,strides,config=None):
         super().__init__()
         self.score_threshold=score_threshold
         self.nms_iou_threshold=nms_iou_threshold
         self.max_detection_boxes_num=max_detection_boxes_num
         self.strides=strides
+        if config is None:
+            self.config=DefaultConfig
+        else:
+            self.config=config
     def forward(self,inputs):
         '''
         inputs  list [cls_logits,cnt_logits,reg_preds]  
@@ -94,7 +83,8 @@ class DetectHead(nn.Module):
         cnt_preds=cnt_logits.sigmoid_()
 
         cls_scores,cls_classes=torch.max(cls_preds,dim=-1)#[batch_size,sum(_h*_w)]
-        cls_scores=cls_scores*(cnt_preds.squeeze())#[batch_size,sum(_h*_w)]
+        if self.config.add_centerness:
+            cls_scores=cls_scores*(cnt_preds.squeeze(dim=-1))#[batch_size,sum(_h*_w)]
         cls_classes=cls_classes+1#[batch_size,sum(_h*_w)]
 
         boxes=self._coords2boxes(coords,reg_preds)#[batch_size,sum(_h*_w),4]
@@ -135,7 +125,7 @@ class DetectHead(nn.Module):
             _cls_classes_post.append(_cls_classes_b[nms_ind])
             _boxes_post.append(_boxes_b[nms_ind])
         scores,classes,boxes= torch.stack(_cls_scores_post,dim=0),torch.stack(_cls_classes_post,dim=0),torch.stack(_boxes_post,dim=0)
-        boxes=boxes.clamp_(min=0)
+        
         return scores,classes,boxes
     
     @staticmethod
@@ -206,6 +196,15 @@ class DetectHead(nn.Module):
             coords.append(coord)
         return torch.cat(out,dim=1),torch.cat(coords,dim=0)
 
+class ClipBoxes(nn.Module):
+    def __init__(self):
+        super().__init__()
+    def forward(self,batch_imgs,batch_boxes):
+        batch_boxes=batch_boxes.clamp_(min=0)
+        h,w=batch_imgs.shape[2:]
+        batch_boxes[...,[0,2]]=batch_boxes[...,[0,2]].clamp_(max=w-1)
+        batch_boxes[...,[1,3]]=batch_boxes[...,[1,3]].clamp_(max=h-1)
+        return batch_boxes
 
         
 class FCOSDetector(nn.Module):
@@ -220,7 +219,8 @@ class FCOSDetector(nn.Module):
             self.loss_layer=LOSS()
         elif mode=="inference":
             self.detection_head=DetectHead(config.score_threshold,config.nms_iou_threshold,
-                                            config.max_detection_boxes_num,config.strides)
+                                            config.max_detection_boxes_num,config.strides,config)
+            self.clip_boxes=ClipBoxes()
         
     
     def forward(self,inputs):
@@ -243,7 +243,9 @@ class FCOSDetector(nn.Module):
             '''
             batch_imgs=inputs
             out=self.fcos_body(batch_imgs)
-            return self.detection_head(out)
+            scores,classes,boxes=self.detection_head(out)
+            boxes=self.clip_boxes(batch_imgs,boxes)
+            return scores,classes,boxes
 
 
 

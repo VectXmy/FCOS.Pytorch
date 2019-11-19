@@ -7,6 +7,7 @@
 
 import torch
 import torch.nn as nn
+from .config import DefaultConfig
 
 
 
@@ -24,7 +25,7 @@ def coords_fmap2orig(feature,stride):
     shifts_x = torch.arange(0, w * stride, stride, dtype=torch.float32)
     shifts_y = torch.arange(0, h * stride, stride, dtype=torch.float32)
 
-    shift_x, shift_y = torch.meshgrid(shifts_x, shifts_y)
+    shift_y, shift_x = torch.meshgrid(shifts_y, shifts_x)
     shift_x = torch.reshape(shift_x, [-1])
     shift_y = torch.reshape(shift_y, [-1])
     coords = torch.stack([shift_x, shift_y], -1) + stride // 2
@@ -68,7 +69,7 @@ class GenTargets(nn.Module):
             
         return torch.cat(cls_targets_all_level,dim=1),torch.cat(cnt_targets_all_level,dim=1),torch.cat(reg_targets_all_level,dim=1)
 
-    def _gen_level_targets(self,out,gt_boxes,classes,stride,limit_range):
+    def _gen_level_targets(self,out,gt_boxes,classes,stride,limit_range,sample_radiu_ratio=1.5):
         '''
         Args  
         out list contains [[batch_size,class_num,h,w],[batch_size,1,h,w],[batch_size,4,h,w]]  
@@ -102,7 +103,6 @@ class GenTargets(nn.Module):
         r_off=gt_boxes[...,2][:,None,:]-x[None,:,None]
         b_off=gt_boxes[...,3][:,None,:]-y[None,:,None]
         ltrb_off=torch.stack([l_off,t_off,r_off,b_off],dim=-1)#[batch_size,h*w,m,4]
-        assert ltrb_off.shape==(batch_size,h_mul_w,m,4)
 
         areas=(ltrb_off[...,0]+ltrb_off[...,2])*(ltrb_off[...,1]+ltrb_off[...,3])#[batch_size,h*w,m]
 
@@ -111,7 +111,19 @@ class GenTargets(nn.Module):
 
         mask_in_gtboxes=off_min>0
         mask_in_level=(off_max>limit_range[0])&(off_max<=limit_range[1])
-        mask_pos=mask_in_gtboxes&mask_in_level#[batch_size,h*w,m]
+
+        radiu=stride*sample_radiu_ratio
+        gt_center_x=(gt_boxes[...,0]+gt_boxes[...,2])/2
+        gt_center_y=(gt_boxes[...,1]+gt_boxes[...,3])/2
+        c_l_off=x[None,:,None]-gt_center_x[:,None,:]#[1,h*w,1]-[batch_size,1,m]-->[batch_size,h*w,m]
+        c_t_off=y[None,:,None]-gt_center_y[:,None,:]
+        c_r_off=gt_center_x[:,None,:]-x[None,:,None]
+        c_b_off=gt_center_y[:,None,:]-y[None,:,None]
+        c_ltrb_off=torch.stack([c_l_off,c_t_off,c_r_off,c_b_off],dim=-1)#[batch_size,h*w,m,4]
+        c_off_max=torch.max(c_ltrb_off,dim=-1)[0]
+        mask_center=c_off_max<radiu
+
+        mask_pos=mask_in_gtboxes&mask_in_level&mask_center#[batch_size,h*w,m]
 
         areas[~mask_pos]=99999999
         areas_min_ind=torch.min(areas,dim=-1)[1]#[batch_size,h*w]
@@ -142,8 +154,9 @@ class GenTargets(nn.Module):
         cnt_targets[~mask_pos_2]=-1
         reg_targets[~mask_pos_2]=-1
         
-
         return cls_targets,cnt_targets,reg_targets
+        
+
 
 def compute_cls_loss(preds,targets,mask):
     '''
@@ -286,8 +299,12 @@ def focal_loss_from_logits(preds,targets,gamma=2.0,alpha=0.25):
 
 
 class LOSS(nn.Module):
-    def __init__(self):
+    def __init__(self,config=None):
         super().__init__()
+        if config is None:
+            self.config=DefaultConfig
+        else:
+            self.config=config
     def forward(self,inputs):
         '''
         inputs list
@@ -301,8 +318,12 @@ class LOSS(nn.Module):
         cls_loss=compute_cls_loss(cls_logits,cls_targets,mask_pos).mean()#[]
         cnt_loss=compute_cnt_loss(cnt_logits,cnt_targets,mask_pos).mean()
         reg_loss=compute_reg_loss(reg_preds,reg_targets,mask_pos).mean()
-        total_loss=cls_loss+cnt_loss+reg_loss
-        return cls_loss,cnt_loss,reg_loss,total_loss
+        if self.config.add_centerness:
+            total_loss=cls_loss+cnt_loss+reg_loss
+            return cls_loss,cnt_loss,reg_loss,total_loss
+        else:
+            total_loss=cls_loss+reg_loss+cnt_loss*0.0
+            return cls_loss,cnt_loss,reg_loss,total_loss
 
 
 
