@@ -1,18 +1,14 @@
-'''
-@Author: xxxmy
-@Github: github.com/VectXmy
-@Date: 2019-09-26
-@Email: xxxmy@foxmail.com
-'''
-
-from torchvision.datasets import CocoDetection
-import torch
+from pycocotools.cocoeval import COCOeval
 import numpy as np
-from torch.utils.data import DataLoader
+import json
+from tqdm import tqdm
+from torchvision.datasets import CocoDetection
 from torchvision import transforms
 import cv2
+from model.fcos import FCOSDetector
+import torch
 
-class COCODataset(CocoDetection):
+class COCOGenerator(CocoDetection):
     CLASSES_NAME = (
     '__back_ground__', 'person', 'bicycle', 'car', 'motorcycle',
     'airplane', 'bus', 'train', 'truck', 'boat', 'traffic light',
@@ -30,7 +26,7 @@ class COCODataset(CocoDetection):
     'microwave', 'oven', 'toaster', 'sink', 'refrigerator',
     'book', 'clock', 'vase', 'scissors', 'teddy bear',
     'hair drier', 'toothbrush')
-    def __init__(self,imgs_path,anno_path,resize_size=[800,1024],transform=None,target_transform=None):
+    def __init__(self,imgs_path,anno_path,resize_size=[800,1024]):
         super().__init__(imgs_path,anno_path)
 
         print("INFO====>check annos, filtering invalid data......")
@@ -44,11 +40,10 @@ class COCODataset(CocoDetection):
         self.category2id = {v: i + 1 for i, v in enumerate(self.coco.getCatIds())}
         self.id2category = {v: k for k, v in self.category2id.items()}
 
-        self.transform=transform
-        self.target_transform=target_transform
         self.resize_size=resize_size
         self.mean=[0.40789654, 0.44719302, 0.47026115]
         self.std=[0.28863828, 0.27408164, 0.27809835]
+        
 
     def __getitem__(self,index):
         
@@ -61,7 +56,7 @@ class COCODataset(CocoDetection):
         boxes[...,2:]=boxes[...,2:]+boxes[...,:2]
         img=np.array(img)
         
-        img,boxes=self.preprocess_img_boxes(img,boxes,self.resize_size)
+        img,boxes,scale=self.preprocess_img_boxes(img,boxes,self.resize_size)
         # img=draw_bboxes(img,boxes)
         
 
@@ -71,11 +66,11 @@ class COCODataset(CocoDetection):
 
 
         img=transforms.ToTensor()(img)
-        # img= transforms.Normalize(self.mean, self.std,inplace=True)(img)
-        boxes=torch.from_numpy(boxes)
-        classes=torch.LongTensor(classes)
+        img= transforms.Normalize(self.mean, self.std,inplace=True)(img)
+        # boxes=torch.from_numpy(boxes)
+        classes=np.array(classes,dtype=np.int64)
 
-        return img,boxes,classes
+        return img,boxes,classes,scale
 
     def preprocess_img_boxes(self,image,boxes,input_ksize):
         '''
@@ -106,7 +101,7 @@ class COCODataset(CocoDetection):
         else:
             boxes[:, [0, 2]] = boxes[:, [0, 2]] * scale 
             boxes[:, [1, 3]] = boxes[:, [1, 3]] * scale 
-            return image_paded, boxes
+            return image_paded, boxes,scale
 
 
 
@@ -123,54 +118,70 @@ class COCODataset(CocoDetection):
 
         return True
     
-    def collate_fn(self,data):
-        imgs_list,boxes_list,classes_list=zip(*data)
-        assert len(imgs_list)==len(boxes_list)==len(classes_list)
-        batch_size=len(boxes_list)
-        pad_imgs_list=[]
-        pad_boxes_list=[]
-        pad_classes_list=[]
 
-        h_list = [int(s.shape[1]) for s in imgs_list]
-        w_list = [int(s.shape[2]) for s in imgs_list]
-        max_h = np.array(h_list).max()
-        max_w = np.array(w_list).max()
-        for i in range(batch_size):
-            img=imgs_list[i]
-            pad_imgs_list.append(transforms.Normalize(self.mean, self.std,inplace=True)(torch.nn.functional.pad(img,(0,int(max_w-img.shape[2]),0,int(max_h-img.shape[1])),value=0.)))
+def evaluate_coco(generator, model, threshold=0.05):
+    """ Use the pycocotools to evaluate a COCO model on a dataset.
 
+    Args
+        generator : The generator for generating the evaluation data.
+        model     : The model to evaluate.
+        threshold : The score threshold to use.
+    """
+    # start collecting results
+    results = []
+    image_ids = []
+    for index in tqdm(range(len(generator))):
+        img,gt_boxes,gt_labels,scale = generator[index]
+        # run network
+        scores, labels,boxes  = model(img.unsqueeze(dim=0))
 
-        max_num=0
-        for i in range(batch_size):
-            n=boxes_list[i].shape[0]
-            if n>max_num:max_num=n   
-        for i in range(batch_size):
-            pad_boxes_list.append(torch.nn.functional.pad(boxes_list[i],(0,0,0,max_num-boxes_list[i].shape[0]),value=-1))
-            pad_classes_list.append(torch.nn.functional.pad(classes_list[i],(0,max_num-classes_list[i].shape[0]),value=-1))
-        
+        boxes /= scale
+        # correct boxes for image scale
+        # change to (x, y, w, h) (MS COCO standard)
+        boxes[:, :, 2] -= boxes[:, :, 0]
+        boxes[:, :, 3] -= boxes[:, :, 1]
 
-        batch_boxes=torch.stack(pad_boxes_list)
-        batch_classes=torch.stack(pad_classes_list)
-        batch_imgs=torch.stack(pad_imgs_list)
+        # compute predicted labels and scores
+        for box, score, label in zip(boxes[0], scores[0], labels[0]):
+            # scores are sorted, so we can break
+            if score < threshold:
+                break
 
-        return batch_imgs,batch_boxes,batch_classes
+            # append detection for each positively labeled class
+            image_result = {
+                'image_id'    : generator.ids[index],
+                'category_id' : generator.id2category(label),
+                'score'       : float(score),
+                'bbox'        : box.tolist(),
+            }
 
-        
+            # append detection to results
+            results.append(image_result)
 
+        # append image to list of processed images
+        # image_ids.append(generator.ids[index])
 
+    if not len(results):
+        return
 
+    # write output
+    json.dump(results, open('coco_bbox_results.json', 'w'), indent=4)
+    # json.dump(image_ids, open('{}_processed_image_ids.json'.format(generator.set_name), 'w'), indent=4)
 
+    # load results in COCO evaluation tool
+    coco_true = generator.coco
+    coco_pred = coco_true.loadRes('coco_bbox_results.json')
 
-if __name__=="__main__":
-    
-    dataset=COCODataset("/home/data/coco2017/train2017","/home/data/coco2017/instances_train2017.json")
-    # img,boxes,classes=dataset[0]
-    # print(boxes,classes,"\n",img.shape,boxes.shape,classes.shape,boxes.dtype,classes.dtype,img.dtype)
-    # cv2.imwrite("./123.jpg",img)
-    img,boxes,classes=dataset.collate_fn([dataset[0],dataset[1],dataset[2]])
-    print(boxes,classes,"\n",img.shape,boxes.shape,classes.shape,boxes.dtype,classes.dtype,img.dtype)
+    # run COCO evaluation
+    coco_eval = COCOeval(coco_true, coco_pred, 'bbox')
+    coco_eval.params.imgIds = image_ids
+    coco_eval.evaluate()
+    coco_eval.accumulate()
+    coco_eval.summarize()
+    return coco_eval.stats
 
-
-
-
-        
+if __name__ == "__main__":
+    generator=COCOGenerator("/home/data/coco2017/val2017","/home/data/coco2017/instances_val2017.json")
+    model=FCOSDetector(mode="inference")
+    model.load_state_dict(torch.load("./logs/1121/coco2017_multigpu_800x1024_epoch4_loss1.2863.pth",map_location=torch.device('cpu')))
+    evaluate_coco(generator,model)
