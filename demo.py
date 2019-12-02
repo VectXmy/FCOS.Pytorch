@@ -11,6 +11,7 @@ import torch
 from torchvision import transforms
 import numpy as np
 from dataloader.VOC_dataset import VOCDataset
+from dataloader.COCO_dataset import COCODataset
 import time
 
 def preprocess_img(image,input_ksize):
@@ -55,10 +56,36 @@ def convertSyncBNtoBN(module):
     del module
     return module_output
 if __name__=="__main__":
-    model=FCOSDetector(mode="inference")
+    class Config():
+        #backbone
+        pretrained=False
+        freeze_stage_1=True
+        freeze_bn=True
+
+        #fpn
+        fpn_out_channels=256
+        use_p5=True
+        
+        #head
+        class_num=80
+        use_GN_head=True
+        prior=0.01
+        add_centerness=True
+        cnt_on_reg=False
+
+        #training
+        strides=[8,16,32,64,128]
+        limit_range=[[-1,64],[64,128],[128,256],[256,512],[512,999999]]
+
+        #inference
+        score_threshold=0.2
+        nms_iou_threshold=0.5
+        max_detection_boxes_num=150
+
+    model=FCOSDetector(mode="inference",config=Config)
     # model=torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
     # print("INFO===>success convert BN to SyncBN")
-    model.load_state_dict(torch.load("./logs/voc20172012_multigpu_800x1024_1111_epoch7_loss0.5926.pth",map_location=torch.device('cpu')))
+    model.load_state_dict(torch.load("./convert_weights/FCOS_R_50_FPN_1x_my.pth",map_location=torch.device('cpu')))
     # model=convertSyncBNtoBN(model)
     # print("INFO===>success convert SyncBN to BN")
     model=model.cuda().eval()
@@ -70,9 +97,12 @@ if __name__=="__main__":
     for name in names:
         img_bgr=cv2.imread(root+name)
         img_pad=preprocess_img(img_bgr,[800,1024])
-        img=cv2.cvtColor(img_pad.copy(),cv2.COLOR_BGR2RGB)
-        img1=transforms.ToTensor()(img.copy())
-        img1= transforms.Normalize((0.485,0.456,0.406), (0.229,0.224,0.225),inplace=True)(img1)
+        # img=cv2.cvtColor(img_pad.copy(),cv2.COLOR_BGR2RGB)
+        img=img_pad.copy()
+        img_t=torch.from_numpy(img).float().permute(2,0,1)
+        img1= transforms.Normalize([102.9801, 115.9465, 122.7717],[1.,1.,1.])(img_t)
+        # img1=transforms.ToTensor()(img1)
+        # img1= transforms.Normalize((0.485,0.456,0.406), (0.229,0.224,0.225),inplace=True)(img1)
         img1=img1.cuda()
         
 
@@ -93,7 +123,7 @@ if __name__=="__main__":
             pt1=(int(box[0]),int(box[1]))
             pt2=(int(box[2]),int(box[3]))
             img_pad=cv2.rectangle(img_pad,pt1,pt2,(0,255,0))
-            img_pad=cv2.putText(img_pad,"%s %.3f"%(VOCDataset.CLASSES_NAME[int(classes[i])],scores[i]),(int(box[0]),int(box[1])+10),cv2.FONT_HERSHEY_SIMPLEX,0.5,[0,200,20],2)
+            img_pad=cv2.putText(img_pad,"%s %.3f"%(COCODataset.CLASSES_NAME[int(classes[i])],scores[i]),(int(box[0]),int(box[1])+10),cv2.FONT_HERSHEY_SIMPLEX,0.5,[0,200,20],2)
         cv2.imwrite("./out_images/"+name,img_pad)
 
 

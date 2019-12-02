@@ -17,7 +17,7 @@ class ScaleExp(nn.Module):
         return torch.exp(x*self.scale)
 
 class ClsCntRegHead(nn.Module):
-    def __init__(self,in_channel,class_num,GN=True,prior=0.01):
+    def __init__(self,in_channel,class_num,GN=True,cnt_on_reg=True,prior=0.01):
         '''
         Args  
         in_channel  
@@ -28,17 +28,18 @@ class ClsCntRegHead(nn.Module):
         super(ClsCntRegHead,self).__init__()
         self.prior=prior
         self.class_num=class_num
+        self.cnt_on_reg=cnt_on_reg
         
         cls_branch=[]
         reg_branch=[]
 
         for i in range(4):
-            cls_branch.append(nn.Conv2d(in_channel,in_channel,kernel_size=3,padding=1,bias=not GN))
+            cls_branch.append(nn.Conv2d(in_channel,in_channel,kernel_size=3,padding=1,bias=True))
             if GN:
                 cls_branch.append(nn.GroupNorm(32,in_channel))
             cls_branch.append(nn.ReLU(True))
 
-            reg_branch.append(nn.Conv2d(in_channel,in_channel,kernel_size=3,padding=1,bias=not GN))
+            reg_branch.append(nn.Conv2d(in_channel,in_channel,kernel_size=3,padding=1,bias=True))
             if GN:
                 reg_branch.append(nn.GroupNorm(32,in_channel))
             reg_branch.append(nn.ReLU(True))
@@ -72,8 +73,10 @@ class ClsCntRegHead(nn.Module):
             reg_conv_out=self.reg_conv(P)
 
             cls_logits.append(self.cls_logits(cls_conv_out))
-            # cnt_logits.append(self.cnt_logits(cls_conv_out))
-            cnt_logits.append(self.cnt_logits(reg_conv_out))
+            if not self.cnt_on_reg:
+                cnt_logits.append(self.cnt_logits(cls_conv_out))
+            else:
+                cnt_logits.append(self.cnt_logits(reg_conv_out))
             reg_preds.append(self.scale_exp[index](self.reg_pred(reg_conv_out)))
         return cls_logits,cnt_logits,reg_preds
 

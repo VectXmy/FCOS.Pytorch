@@ -29,7 +29,7 @@ class FPN(nn.Module):
     def upsamplelike(self,inputs):
         src,target=inputs
         return F.interpolate(src, size=(target.shape[2], target.shape[3]),
-                    mode='bilinear', align_corners=True)
+                    mode='nearest')
     
     def init_conv_kaiming(self,module):
         if isinstance(module, nn.Conv2d):

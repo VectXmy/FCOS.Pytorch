@@ -21,10 +21,10 @@ class FCOS(nn.Module):
         super().__init__()
         if config is None:
             config=DefaultConfig
-        self.backbone=resnet50(pretrained=config.pretrained)
+        self.backbone=resnet50(pretrained=config.pretrained,if_include_top=False)
         self.fpn=FPN(config.fpn_out_channels,use_p5=config.use_p5)
         self.head=ClsCntRegHead(config.fpn_out_channels,config.class_num,
-                                config.use_GN_head,config.prior)
+                                config.use_GN_head,config.cnt_on_reg,config.prior)
         self.config=config
     def train(self,mode=True):
         '''

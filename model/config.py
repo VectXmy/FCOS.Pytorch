@@ -9,10 +9,11 @@ class DefaultConfig():
     use_p5=True
     
     #head
-    class_num=20
+    class_num=80
     use_GN_head=True
     prior=0.01
     add_centerness=True
+    cnt_on_reg=False
 
     #training
     strides=[8,16,32,64,128]
