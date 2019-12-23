@@ -98,7 +98,7 @@ class COCODataset(CocoDetection):
         pad_w=32-nw%32
         pad_h=32-nh%32
 
-        image_paded = np.zeros(shape=[nh+pad_h, nw+pad_w, 3],dtype=np.float32)
+        image_paded = np.zeros(shape=[nh+pad_h, nw+pad_w, 3],dtype=np.uint8)
         image_paded[:nh, :nw, :] = image_resized
 
         if boxes is None:
