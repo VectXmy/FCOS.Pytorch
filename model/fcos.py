@@ -120,7 +120,7 @@ class DetectHead(nn.Module):
             _cls_scores_b=cls_scores_topk[batch][mask]#[?]
             _cls_classes_b=cls_classes_topk[batch][mask]#[?]
             _boxes_b=boxes_topk[batch][mask]#[?,4]
-            nms_ind=self.box_nms(_boxes_b,_cls_scores_b,self.nms_iou_threshold)
+            nms_ind=self.batched_nms(_boxes_b,_cls_scores_b,_cls_classes_b,self.nms_iou_threshold)
             _cls_scores_post.append(_cls_scores_b[nms_ind])
             _cls_classes_post.append(_cls_classes_b[nms_ind])
             _boxes_post.append(_boxes_b[nms_ind])
@@ -162,7 +162,19 @@ class DetectHead(nn.Module):
             order=order[idx+1]
         return torch.LongTensor(keep)
 
-
+    def batched_nms(self,boxes, scores, idxs, iou_threshold):
+        
+        if boxes.numel() == 0:
+            return torch.empty((0,), dtype=torch.int64, device=boxes.device)
+        # strategy: in order to perform NMS independently per class.
+        # we add an offset to all the boxes. The offset is dependent
+        # only on the class idx, and is large enough so that boxes
+        # from different classes do not overlap
+        max_coordinate = boxes.max()
+        offsets = idxs.to(boxes) * (max_coordinate + 1)
+        boxes_for_nms = boxes + offsets[:, None]
+        keep = self.box_nms(boxes_for_nms, scores, iou_threshold)
+        return keep
 
     def _coords2boxes(self,coords,offsets):
         '''
