@@ -32,3 +32,4 @@ The official implementation of preprocessing(pixel is not  normalized to 0-1 and
 ### Other  
 some excellent work based on this repo:  
 [FCOS-Pytorch-37.2AP](https://github.com/ChingHo97/FCOS-PyTorch-37.2AP)  
+[FCOS_DET_MASK](https://github.com/2anchao/FCOS_DET_MASK)  
