@@ -28,3 +28,7 @@ Train on 2 1080Ti, 3 imgs for each gpu, init lr=1e-5 cosine decays to 1e-6, but 
 Due to computational resource constraints, I was unable to fully train the model on the COCO dataset. I have converted the [official pre-training model weights FCOS_R_50_FPN_1x](https://cloudstor.aarnet.edu.au/plus/s/dDeDPBLEAt19Xrl/download) into my own.  
 The converted weights is avaliable [Baidu driver link](https://pan.baidu.com/s/14KbDMisTksx_m91uMt-LIA), password: rpni     
 The official implementation of preprocessing(pixel is not  normalized to 0-1 and input img follows BGR fomat ) is a little different from mine.   
+
+### Other  
+some excellent work based on this repo:  
+[FCOS-Pytorch-37.2AP](https://github.com/ChingHo97/FCOS-PyTorch-37.2AP)  
