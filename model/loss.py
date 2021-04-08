@@ -291,7 +291,7 @@ def focal_loss_from_logits(preds,targets,gamma=2.0,alpha=0.25):
     '''
     preds=preds.sigmoid()
     pt=preds*targets+(1.0-preds)*(1.0-targets)
-    w=alpha*(1.0-targets)+alpha*targets
+    w=alpha*(1.0-targets)+(1.0-alpha)*targets
     loss=-w*torch.pow((1.0-pt),gamma)*pt.log()
     return loss.sum()
 
